@@ -18,9 +18,6 @@ files = {
     filename: open(filename).read().splitlines() for filename in [allowlist, blocklist]
 }
 
-with open("publicsuffixlist.local", "r") as psl_local_file:
-    psl_local = set(line.strip() for line in psl_local_file if line.strip())
-
 
 def download_suffixes():
     with open("public_suffix_list.dat", "wb") as file:
@@ -28,12 +25,17 @@ def download_suffixes():
         file.write(response.content)
 
 
-def check_for_public_suffixes(filename):
+def check_for_public_suffixes(filename, psl, psl_local):
+    """
+    Check if any line in the given file is just a public suffix.
+    Public suffixes are supplied from two sources: online database and local list.
+
+    Exit with code 1 if any public suffix is found.
+
+    :param filename: The name of the file to check.
+    """
     lines = files[filename]
     suffix_detected = False
-    psl = None
-    with open("public_suffix_list.dat", "r") as latest:
-        psl = PublicSuffixList(latest)
     for i, line in enumerate(lines):
         current_line = line.strip()
         public_suffix = psl.publicsuffix(current_line)
@@ -58,30 +60,30 @@ def check_for_public_suffixes(filename):
         )
         sys.exit(1)
 
-def check_for_invalid_level_domains(filename):
-    """
-    Allow third or lower level domains if the length of the private part is 1
-    and the rest of the domain is a known public suffix.
 
-    Suffixes are supplied from two sources: online database and local list.
+def check_for_invalid_level_domains(filename, psl, psl_local):
     """
-    with open("public_suffix_list.dat", "r") as latest:
-        psl = PublicSuffixList(latest)
+    Allow third or lower level domains in the list only if the entry contains a known public suffix
+    and the length of the private part is 1.
 
+    Public suffixes are supplied from two sources: online database and local list.
+    """
     invalid = set()
     for line in files[filename]:
         domain = line.strip()
         parts = domain.split('.')
-        if len(psl.privateparts(domain)) > 1:
-            invalid.add(line)
-            break
+        public_valid = local_valid = False
+        if len(psl.privateparts(domain)) == 1:
+            public_valid = True
         for i in range(len(parts)):
             suffix = '.'.join(parts[i:])
             if suffix in psl_local:
                 private_parts = parts[:i]
-                if len(private_parts) > 1:
-                    invalid.add(line)
+                if len(private_parts) == 1:
+                    local_valid = True
                     break
+        if not (public_valid or local_valid):
+            invalid.add(line)
 
     if invalid:
         print("The following entries contain invalid third or lower level domain in {!r}:".format(filename))
@@ -134,11 +136,17 @@ if __name__ == "__main__":
     # Download the list of public suffixes
     download_suffixes()
 
-    # Check if any domains have a public suffix
-    check_for_public_suffixes(blocklist)
+    with open("publicsuffixlist.local", "r") as psl_local_file:
+        psl_local = set(line.strip() for line in psl_local_file if line.strip())
+
+    with open("public_suffix_list.dat", "r") as latest:
+        psl = PublicSuffixList(latest)
+
+    # Check if any domain is just a public suffix
+    check_for_public_suffixes(blocklist, psl, psl_local)
 
     # Check if any domains contain invalid level
-    check_for_invalid_level_domains(blocklist)
+    check_for_invalid_level_domains(blocklist, psl, psl_local)
 
     # Check if any domains are not lowercase
     check_for_non_lowercase(allowlist)
